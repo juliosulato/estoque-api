@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { ValidationPipe } from '@nestjs/common';
 import { json } from 'express';
 import { toNodeHandler } from 'better-auth/node';
 import { AppModule } from './app.module.js';
@@ -11,6 +12,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   app.setGlobalPrefix('api');
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
   const auth = app.get<Auth>(AUTH_INSTANCE);
 
