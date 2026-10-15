@@ -1,15 +1,19 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Category, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { generateSlug } from './utils/generate-slug.util.js';
+import { generateSlug } from '../common/utils/generate-slug.util.js';
+import type { PaginatedResult } from '../common/types/paginated-result.type.js';
 import type {
   CategoryTreeNode,
   CategoryWithRelations,
-  PaginatedResult,
 } from './types/category.types.js';
 import type { CreateCategoryDto } from './dto/create-category.dto.js';
 import type { UpdateCategoryDto } from './dto/update-category.dto.js';
-import type { PaginateCategoryDto } from './dto/paginate-category.dto.js';
+import type { PaginationDto } from '../common/dto/pagination.dto.js';
 
 @Injectable()
 export class CategoriesService {
@@ -31,12 +35,16 @@ export class CategoriesService {
     });
   }
 
-  async findAll(query: PaginateCategoryDto): Promise<PaginatedResult<Category>> {
+  async findAll(query: PaginationDto): Promise<PaginatedResult<Category>> {
     const { page, limit } = query;
     const skip = (page - 1) * limit;
 
     const [data, total] = await this.prisma.$transaction([
-      this.prisma.category.findMany({ skip, take: limit, orderBy: { name: 'asc' } }),
+      this.prisma.category.findMany({
+        skip,
+        take: limit,
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      }),
       this.prisma.category.count(),
     ]);
 
@@ -44,7 +52,9 @@ export class CategoriesService {
   }
 
   async findTree(): Promise<CategoryTreeNode[]> {
-    const categories = await this.prisma.category.findMany({ orderBy: { name: 'asc' } });
+    const categories = await this.prisma.category.findMany({
+      orderBy: { name: 'asc' },
+    });
     return this.buildTree(categories);
   }
 
@@ -94,14 +104,18 @@ export class CategoriesService {
   async remove(id: string): Promise<void> {
     await this.findOneOrThrow(id);
 
-    const productCount = await this.prisma.product.count({ where: { categoryId: id } });
+    const productCount = await this.prisma.product.count({
+      where: { categoryId: id },
+    });
     if (productCount > 0) {
       throw new ConflictException(
         `Cannot delete category: ${productCount} product(s) are linked to it`,
       );
     }
 
-    const childrenCount = await this.prisma.category.count({ where: { parentId: id } });
+    const childrenCount = await this.prisma.category.count({
+      where: { parentId: id },
+    });
     if (childrenCount > 0) {
       throw new ConflictException(
         `Cannot delete category: it has ${childrenCount} child categor${childrenCount === 1 ? 'y' : 'ies'}`,
@@ -119,17 +133,26 @@ export class CategoriesService {
     return category;
   }
 
-  private async ensureSlugAvailable(slug: string, excludeId?: string): Promise<void> {
+  private async ensureSlugAvailable(
+    slug: string,
+    excludeId?: string,
+  ): Promise<void> {
     const existing = await this.prisma.category.findUnique({ where: { slug } });
     if (existing && existing.id !== excludeId) {
-      throw new ConflictException(`Category with slug "${slug}" already exists`);
+      throw new ConflictException(
+        `Category with slug "${slug}" already exists`,
+      );
     }
   }
 
   private async ensureParentExists(parentId: string): Promise<void> {
-    const parent = await this.prisma.category.findUnique({ where: { id: parentId } });
+    const parent = await this.prisma.category.findUnique({
+      where: { id: parentId },
+    });
     if (!parent) {
-      throw new NotFoundException(`Parent category with id "${parentId}" not found`);
+      throw new NotFoundException(
+        `Parent category with id "${parentId}" not found`,
+      );
     }
   }
 
@@ -146,8 +169,13 @@ export class CategoriesService {
    * tree depth, no recursive SQL/CTE needed given the expected small size
    * of an admin category tree.
    */
-  private async assertNoCycle(categoryId: string, candidateParentId: string): Promise<void> {
-    const all = await this.prisma.category.findMany({ select: { id: true, parentId: true } });
+  private async assertNoCycle(
+    categoryId: string,
+    candidateParentId: string,
+  ): Promise<void> {
+    const all = await this.prisma.category.findMany({
+      select: { id: true, parentId: true },
+    });
     const parentById = new Map(all.map((c) => [c.id, c.parentId]));
 
     let currentId: string | null = candidateParentId;
@@ -171,14 +199,19 @@ export class CategoriesService {
 
   private buildTree(categories: Category[]): CategoryTreeNode[] {
     const nodeById = new Map<string, CategoryTreeNode>(
-      categories.map((category) => [category.id, { ...category, children: [] }]),
+      categories.map((category) => [
+        category.id,
+        { ...category, children: [] },
+      ]),
     );
     const roots: CategoryTreeNode[] = [];
 
     for (const category of categories) {
       const node = nodeById.get(category.id);
       if (!node) continue;
-      const parentNode = category.parentId ? nodeById.get(category.parentId) : undefined;
+      const parentNode = category.parentId
+        ? nodeById.get(category.parentId)
+        : undefined;
       if (parentNode) {
         parentNode.children.push(node);
       } else {

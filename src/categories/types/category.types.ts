@@ -7,10 +7,3 @@ export type CategoryWithRelations = Prisma.CategoryGetPayload<{
 export interface CategoryTreeNode extends Category {
   children: CategoryTreeNode[];
 }
-
-export interface PaginatedResult<T> {
-  data: T[];
-  total: number;
-  page: number;
-  limit: number;
-}

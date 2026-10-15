@@ -1,13 +1,16 @@
+import { type INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module.js';
+import { afterEach, beforeEach, describe, it } from 'vitest';
+import { resolveTestDatabase } from './helpers/test-database.js';
 
-describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+const { skip } = resolveTestDatabase();
+
+describe.skipIf(skip)('AppController (e2e)', () => {
+  let app: INestApplication;
 
   beforeEach(async () => {
+    const { AppModule } = await import('./../src/app.module.js');
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -24,6 +27,6 @@ describe('AppController (e2e)', () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    await app?.close();
   });
 });

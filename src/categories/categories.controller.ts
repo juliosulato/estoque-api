@@ -16,17 +16,17 @@ import { AuthGuard } from '../auth/auth.guard.js';
 import { CategoriesService } from './categories.service.js';
 import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { UpdateCategoryDto } from './dto/update-category.dto.js';
-import { PaginateCategoryDto } from './dto/paginate-category.dto.js';
+import { PaginationDto } from '../common/dto/pagination.dto.js';
+import type { PaginatedResult } from '../common/types/paginated-result.type.js';
 import type {
   CategoryTreeNode,
   CategoryWithRelations,
-  PaginatedResult,
 } from './types/category.types.js';
 
 @UseGuards(AuthGuard)
 @Controller('admin/categorias')
 export class CategoriesController {
-  constructor(private readonly categoriesService: CategoriesService) { }
+  constructor(private readonly categoriesService: CategoriesService) {}
 
   @Post()
   create(@Body() dto: CreateCategoryDto): Promise<Category> {
@@ -34,7 +34,7 @@ export class CategoriesController {
   }
 
   @Get()
-  findAll(@Query() query: PaginateCategoryDto): Promise<PaginatedResult<Category>> {
+  findAll(@Query() query: PaginationDto): Promise<PaginatedResult<Category>> {
     return this.categoriesService.findAll(query);
   }
 
@@ -52,7 +52,10 @@ export class CategoriesController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateCategoryDto): Promise<Category> {
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCategoryDto,
+  ): Promise<Category> {
     return this.categoriesService.update(id, dto);
   }
 
