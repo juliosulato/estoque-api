@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
-  SHADOW_DATABASE_URL: z.string().min(1),
+  SHADOW_DATABASE_URL: z.string().optional(),
   BETTER_AUTH_SECRET: z.string().min(1),
   BETTER_AUTH_URL: z.string().min(1),
   SEED_ADMIN_EMAIL: z.string().min(1),
