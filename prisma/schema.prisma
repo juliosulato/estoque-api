@@ -119,7 +119,7 @@ model Product {
 
 model ProductImage {
   id    String  @id @default(cuid())
-  key   String
+  key   String  @unique
   url   String
   alt   String?
   order Int     @default(0)

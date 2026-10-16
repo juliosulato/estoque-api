@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,7 +20,7 @@ vi.mock('@aws-sdk/s3-request-presigner', () => ({
 
 const configValues: Record<string, string> = {
   S3_BUCKET: 'bucket',
-  S3_PUBLIC_BASE_URL: 'https://cdn.example.com/',
+  S3_PUBLIC_BASE_URL: 'https://cdn.example.com',
 };
 
 function createPrismaMock() {
@@ -96,7 +97,7 @@ describe('MediaService', () => {
       expect(result.uploadUrl).toBe('https://signed');
       expect(result.expiresIn).toBe(300);
       expect(result.key).toMatch(/^products\/p1\/[0-9a-f-]{36}\.png$/);
-      const [, command, options] = vi.mocked(getSignedUrl).mock.calls[0] as [
+      const [, command, options] = vi.mocked(getSignedUrl).mock.calls[0] as unknown as [
         unknown,
         { input: Record<string, unknown> },
         { expiresIn: number },
@@ -114,6 +115,10 @@ describe('MediaService', () => {
   describe('confirm', () => {
     const key = 'products/p1/abc.jpg';
 
+    beforeEach(() => {
+      prisma.productImage.count.mockResolvedValue(0);
+    });
+
     it('rejects keys from another product', async () => {
       await expect(
         service.confirm('p1', { key: 'products/p2/abc.jpg' }),
@@ -121,15 +126,46 @@ describe('MediaService', () => {
       expect(s3.send).not.toHaveBeenCalled();
     });
 
-    it('rejects an already registered key', async () => {
-      prisma.productImage.findFirst.mockResolvedValue({ id: 'i1' });
+    it('throws ConflictException when the product already has 10 images', async () => {
+      prisma.productImage.count.mockResolvedValue(10);
+      await expect(service.confirm('p1', { key })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(s3.send).not.toHaveBeenCalled();
+    });
+
+    it('maps a P2002 on create to ConflictException', async () => {
+      s3.send.mockResolvedValue({
+        ContentType: 'image/jpeg',
+        ContentLength: 10,
+      });
+      prisma.productImage.aggregate.mockResolvedValue({
+        _max: { order: null },
+      });
+      prisma.productImage.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
       await expect(service.confirm('p1', { key })).rejects.toBeInstanceOf(
         ConflictException,
       );
     });
 
+    it('rethrows other create errors', async () => {
+      s3.send.mockResolvedValue({
+        ContentType: 'image/jpeg',
+        ContentLength: 10,
+      });
+      prisma.productImage.aggregate.mockResolvedValue({
+        _max: { order: null },
+      });
+      prisma.productImage.create.mockRejectedValue(new Error('boom'));
+      await expect(service.confirm('p1', { key })).rejects.toThrow('boom');
+    });
+
     it('rejects when the object does not exist in S3', async () => {
-      prisma.productImage.findFirst.mockResolvedValue(null);
       s3.send.mockRejectedValue(
         Object.assign(new Error('nf'), { name: 'NotFound' }),
       );
@@ -139,7 +175,6 @@ describe('MediaService', () => {
     });
 
     it('rejects objects with invalid type or size', async () => {
-      prisma.productImage.findFirst.mockResolvedValue(null);
       s3.send.mockResolvedValue({
         ContentType: 'text/html',
         ContentLength: 10,
@@ -157,7 +192,6 @@ describe('MediaService', () => {
     });
 
     it('creates the image with url and order = max + 1', async () => {
-      prisma.productImage.findFirst.mockResolvedValue(null);
       s3.send.mockResolvedValue({
         ContentType: 'image/jpeg',
         ContentLength: 10,
@@ -178,7 +212,6 @@ describe('MediaService', () => {
     });
 
     it('starts at order 0 for the first image', async () => {
-      prisma.productImage.findFirst.mockResolvedValue(null);
       s3.send.mockResolvedValue({
         ContentType: 'image/jpeg',
         ContentLength: 10,

@@ -15,7 +15,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { ProductImage } from '@prisma/client';
+import { Prisma, type ProductImage } from '@prisma/client';
 import type { EnvConfig } from '../config/env.schema.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ConfirmImageDto } from './dto/confirm-image.dto.js';
@@ -56,9 +56,7 @@ export class MediaService {
     config: ConfigService<EnvConfig, true>,
   ) {
     this.bucket = config.get('S3_BUCKET', { infer: true });
-    this.publicBaseUrl = config
-      .get('S3_PUBLIC_BASE_URL', { infer: true })
-      .replace(/\/+$/, '');
+    this.publicBaseUrl = config.get('S3_PUBLIC_BASE_URL', { infer: true });
   }
 
   async presign(
@@ -73,14 +71,7 @@ export class MediaService {
       );
     }
 
-    const count = await this.prisma.productImage.count({
-      where: { productId },
-    });
-    if (count >= MAX_IMAGES_PER_PRODUCT) {
-      throw new ConflictException(
-        `Product already has the maximum of ${MAX_IMAGES_PER_PRODUCT} images`,
-      );
-    }
+    await this.ensureBelowImageLimit(productId);
 
     const key = `products/${productId}/${randomUUID()}.${EXTENSIONS[dto.contentType]}`;
     const uploadUrl = await getSignedUrl(
@@ -106,12 +97,7 @@ export class MediaService {
     }
     await this.ensureProductExists(productId);
 
-    const existing = await this.prisma.productImage.findFirst({
-      where: { key: dto.key },
-    });
-    if (existing) {
-      throw new ConflictException('Image with this key is already registered');
-    }
+    await this.ensureBelowImageLimit(productId);
 
     const head = await this.s3
       .send(new HeadObjectCommand({ Bucket: this.bucket, Key: dto.key }))
@@ -135,15 +121,27 @@ export class MediaService {
       _max: { order: true },
     });
 
-    return this.prisma.productImage.create({
-      data: {
-        productId,
-        key: dto.key,
-        url: `${this.publicBaseUrl}/${dto.key}`,
-        alt: dto.alt,
-        order: (_max.order ?? -1) + 1,
-      },
-    });
+    try {
+      return await this.prisma.productImage.create({
+        data: {
+          productId,
+          key: dto.key,
+          url: `${this.publicBaseUrl}/${dto.key}`,
+          alt: dto.alt,
+          order: (_max.order ?? -1) + 1,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Image with this key is already registered',
+        );
+      }
+      throw error;
+    }
   }
 
   async reorder(
@@ -196,6 +194,17 @@ export class MediaService {
       this.logger.error(
         `Failed to delete S3 object "${image.key}"`,
         error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private async ensureBelowImageLimit(productId: string): Promise<void> {
+    const count = await this.prisma.productImage.count({
+      where: { productId },
+    });
+    if (count >= MAX_IMAGES_PER_PRODUCT) {
+      throw new ConflictException(
+        `Product already has the maximum of ${MAX_IMAGES_PER_PRODUCT} images`,
       );
     }
   }
