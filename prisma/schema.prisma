@@ -164,5 +164,4 @@ model StockMovement {
 enum MovementType {
   ENTRY
   EXIT
-  ADJUSTMENT
 }
