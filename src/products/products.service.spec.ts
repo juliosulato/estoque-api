@@ -3,6 +3,8 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
+import type { S3Client } from '@aws-sdk/client-s3';
+import type { ConfigService } from '@nestjs/config';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { ProductsService } from './products.service.js';
@@ -12,6 +14,7 @@ const existingProduct = {
   sku: 'SKU-1',
   slug: 'camiseta-azul',
   categoryId: 'c1',
+  images: [],
 };
 
 function createPrismaMock() {
@@ -31,13 +34,22 @@ function createPrismaMock() {
 
 describe('ProductsService', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
+  let s3: { send: ReturnType<typeof vi.fn> };
   let service: ProductsService;
 
   beforeEach(() => {
     prisma = createPrismaMock();
     prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
     prisma.product.findUnique.mockResolvedValue(null);
-    service = new ProductsService(prisma as unknown as PrismaService);
+    s3 = { send: vi.fn().mockResolvedValue({}) };
+    service = new ProductsService(
+      prisma as unknown as PrismaService,
+      s3 as unknown as S3Client,
+      { get: vi.fn().mockReturnValue('bucket') } as unknown as ConfigService<
+        never,
+        true
+      >,
+    );
   });
 
   describe('create', () => {
@@ -241,6 +253,42 @@ describe('ProductsService', () => {
         where: { id: 'p1' },
       });
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(s3.send).not.toHaveBeenCalled();
+    });
+
+    it('removes the image objects from S3 after the database delete', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...existingProduct,
+        images: [{ key: 'products/p1/a.jpg' }, { key: 'products/p1/b.png' }],
+      });
+      prisma.stockMovement.count.mockResolvedValue(0);
+      prisma.$transaction.mockImplementation(() => {
+        expect(s3.send).not.toHaveBeenCalled();
+        return Promise.resolve([]);
+      });
+
+      await service.remove('p1');
+
+      expect(s3.send).toHaveBeenCalledTimes(1);
+      const command = s3.send.mock.calls[0]?.[0] as {
+        input: { Bucket: string; Delete: { Objects: { Key: string }[] } };
+      };
+      expect(command.input.Bucket).toBe('bucket');
+      expect(command.input.Delete.Objects).toEqual([
+        { Key: 'products/p1/a.jpg' },
+        { Key: 'products/p1/b.png' },
+      ]);
+    });
+
+    it('does not fail when S3 deletion fails', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...existingProduct,
+        images: [{ key: 'products/p1/a.jpg' }],
+      });
+      prisma.stockMovement.count.mockResolvedValue(0);
+      s3.send.mockRejectedValue(new Error('s3 down'));
+
+      await expect(service.remove('p1')).resolves.toBeUndefined();
     });
   });
 });

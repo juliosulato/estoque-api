@@ -1,10 +1,16 @@
+import { DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import type { EnvConfig } from '../config/env.schema.js';
+import { S3_CLIENT } from '../media/s3.provider.js';
 import type { PaginatedResult } from '../common/types/paginated-result.type.js';
 import { generateSlug } from '../common/utils/generate-slug.util.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -20,7 +26,13 @@ import {
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ProductsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(S3_CLIENT) private readonly s3: S3Client,
+    private readonly config: ConfigService<EnvConfig, true>,
+  ) {}
 
   async create(dto: CreateProductDto): Promise<ProductDetail> {
     const slug = this.buildSlug(dto.slug?.trim() || dto.name);
@@ -131,7 +143,7 @@ export class ProductsService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.findOne(id);
+    const product = await this.findOne(id);
 
     const movementCount = await this.prisma.stockMovement.count({
       where: { productId: id },
@@ -146,6 +158,30 @@ export class ProductsService {
       this.prisma.stock.deleteMany({ where: { productId: id } }),
       this.prisma.product.delete({ where: { id } }),
     ]);
+
+    await this.deleteImageObjects(product.images.map((image) => image.key));
+  }
+
+  private async deleteImageObjects(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    try {
+      const result = await this.s3.send(
+        new DeleteObjectsCommand({
+          Bucket: this.config.get('S3_BUCKET', { infer: true }),
+          Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
+        }),
+      );
+      if (result.Errors?.length) {
+        this.logger.error(
+          `Failed to delete S3 objects: ${result.Errors.map((e) => e.Key).join(', ')}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to delete S3 objects: ${keys.join(', ')}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private buildSlug(input: string): string {

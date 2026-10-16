@@ -8,6 +8,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CategoriesModule } from './categories/categories.module.js';
 import { ProductsModule } from './products/products.module.js';
+import { MediaModule } from './media/media.module.js';
 import { StockModule } from './stock/stock.module.js';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter.js';
 
@@ -19,6 +20,7 @@ import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter.
     CategoriesModule,
     ProductsModule,
     StockModule,
+    MediaModule,
   ],
   controllers: [AppController],
   providers: [
